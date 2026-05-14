@@ -258,14 +258,6 @@ void WgslLanguageSyntax::emitInvokeMacro(CodegenEmitter& cg,
     cg << emitArgs[0] << "[" << emitArgs[1] << "]";
     return;
   }
-  // eqz(value, "diagnostic message") -> eqz(value)
-  // WGSL has no assert and no string type; the message is dropped.
-  // TODO(wgsl): route the failure to a debug error-flag buffer instead.
-  if (name == "eqz") {
-    assert(emitArgs.size() >= 1);
-    cg << "eqz(" << emitArgs[0] << ")";
-    return;
-  }
   // setField(BabyBear) -> nothing. WGSL has no field-type registration; the
   // prelude hardcodes the BabyBear field arithmetic.
   if (name == "setField") {

@@ -201,6 +201,16 @@ void addWgslSyntax(CodegenOptions& opts) {
   opts.addOpSyntax<ZStruct::GetBufferOp>([](CodegenEmitter& cg, ZStruct::GetBufferOp op) {
     cg << "buf_" << CodegenIdent<IdentKind::Var>(op.getNameAttr());
   });
+
+  // eqz(val, "loc"): a witness-consistency assertion. WGSL has no strings, so
+  // the diagnostic location is dropped; the base/ext split is resolved here
+  // (the op carries the type) rather than in emitInvokeMacro, which does not.
+  opts.addOpSyntax<Zll::EqualZeroOp>([isExtVal](CodegenEmitter& cg, Zll::EqualZeroOp op) {
+    if (isExtVal(op.getIn().getType()))
+      cg << "eqz_ext(" << op.getIn() << ")";
+    else
+      cg << "eqz(" << op.getIn() << ")";
+  });
 }
 
 } // namespace
