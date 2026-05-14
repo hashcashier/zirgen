@@ -67,22 +67,41 @@ void addRustSyntax(CodegenOptions& opts) {
   });
 }
 
+// BabyBear Montgomery encoding, computed at codegen time. risc0's field
+// elements are stored in Montgomery form (R = 2^32), and the WGSL prelude's
+// `mul` is a Montgomery multiplication -- so a field literal, which the IR
+// carries in direct form, must be emitted pre-encoded. Mirrors `encode` / `mul`
+// in risc0_core's baby_bear.rs exactly: encode(a) = mul(R2, a % P).
+static uint32_t babyBearMontgomeryEncode(uint64_t directValue) {
+  constexpr uint32_t kP = 2013265921u;  // 15 * 2^27 + 1
+  constexpr uint32_t kM = 0x88000001u;  // -P^-1 mod 2^32
+  constexpr uint32_t kR2 = 1172168163u; // R^2 mod P, R = 2^32
+  uint32_t a = static_cast<uint32_t>(directValue % kP);
+  uint64_t o64 = static_cast<uint64_t>(kR2) * static_cast<uint64_t>(a);
+  uint32_t low = 0u - static_cast<uint32_t>(o64);
+  uint32_t red = kM * low;
+  o64 += static_cast<uint64_t>(red) * static_cast<uint64_t>(kP);
+  uint32_t ret = static_cast<uint32_t>(o64 >> 32);
+  return ret >= kP ? ret - kP : ret;
+}
+
 // WGSL has no operator overloading, so the BabyBear field operators that C++
 // renders as infix `+ - *` (via the CodegenInfixOp trait) must instead become
 // calls to prelude helper functions: add/sub/mul for base Val, ext_add/ext_sub/
 // ext_mul for the degree-4 extension field. Registering an op-syntax handler
 // here intercepts the op before its default infix emitExpr runs (see
-// CodegenEmitter::emitExpr). Field literals likewise become plain u32 literals.
+// CodegenEmitter::emitExpr). Field literals are emitted as Montgomery-form u32.
 void addWgslSyntax(CodegenOptions& opts) {
   opts.addLiteralSyntax<PolynomialAttr>([](CodegenEmitter& cg, auto polyAttr) {
     auto elems = polyAttr.asArrayRef();
     if (elems.size() == 1) {
-      cg << elems[0] << "u";
+      cg << babyBearMontgomeryEncode(elems[0]) << "u";
     } else {
-      // TODO(wgsl): ExtVal is a prelude struct; constructor lands with the
-      // prelude in a later iteration.
+      // ExtVal is `alias ExtVal = vec4<u32>` in the prelude; each component is
+      // an independently Montgomery-encoded base-field element.
       cg << "ExtVal(";
-      cg.interleaveComma(elems, [&](auto elem) { cg << elem << "u"; });
+      cg.interleaveComma(elems,
+                         [&](auto elem) { cg << babyBearMontgomeryEncode(elem) << "u"; });
       cg << ")";
     }
   });
