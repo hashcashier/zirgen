@@ -49,6 +49,49 @@ namespace zirgen::codegen {
 
 namespace {
 
+// WGSL keywords and reserved words. A circuit identifier (or one of the
+// backend's own helper names) that canonicalizes onto any of these would fail
+// to parse, so canonIdent appends a `_` to escape it.
+bool isWgslReserved(llvm::StringRef ident) {
+  static const llvm::StringSet<> reserved = {
+      // keywords
+      "alias",     "array",       "atomic",  "bool",          "break",
+      "case",      "const",       "const_assert", "continue", "continuing",
+      "default",   "diagnostic",  "discard", "else",          "enable",
+      "f16",       "f32",         "false",   "fn",            "for",
+      "i32",       "if",          "let",     "loop",          "mat2x2",
+      "mat2x3",    "mat2x4",      "mat3x2",  "mat3x3",        "mat3x4",
+      "mat4x2",    "mat4x3",      "mat4x4",  "mod",           "override",
+      "ptr",       "requires",    "return",  "sampler",       "sampler_comparison",
+      "struct",   "switch",      "true",    "u32",           "var",
+      "vec2",      "vec3",        "vec4",    "while",
+      // reserved words
+      "binding",   "buffer",      "cbuffer", "coherent",      "column_major",
+      "common",    "compile",     "demote",  "do",            "filter",
+      "friend",    "get",         "goto",    "groupshared",   "handle",
+      "in",        "inline",      "inout",   "interface",     "layout",
+      "line",      "lineadj",     "linestream", "mediump",    "namespace",
+      "nointerpolation", "noperspective", "null", "out",      "packoffset",
+      "partition", "pass",        "patch",   "pixelfragment", "precise",
+      "precision", "premerge",    "private", "push_constant", "put",
+      "readonly",  "readwrite",   "resource", "restrict",     "row_major",
+      "sample",    "shared",      "snorm",   "static",        "static_assert",
+      "subroutine", "target",     "template", "this",         "threadgroup",
+      "throw",     "triangle",    "triangleadj", "trianglestream", "typedef",
+      "uniform",   "union",       "unless",  "unorm",         "using",
+      "varying",   "virtual",     "volatile", "wgsl",         "workgroup",
+      "writeonly",
+  };
+  return reserved.contains(ident);
+}
+
+// Escape a WGSL-reserved identifier by suffixing `_` (and any identifier that
+// would itself look reserved after that, recursively -- though `_`-suffixed
+// names are never reserved).
+std::string escapeWgsl(std::string ident) {
+  return isWgslReserved(ident) ? ident + "_" : ident;
+}
+
 // Emit the WGSL type reference for an argument, result, struct field, or saved
 // value of MLIR type `ty`. WGSL has no generics, so a layout-trait type becomes
 // its monomorphized BoundLayout_<T> wrapper (paired with a runtime buffer id);
@@ -77,17 +120,17 @@ std::string WgslLanguageSyntax::canonIdent(llvm::StringRef ident, IdentKind kind
     std::string str = convertToCamelFromSnakeCase(ident);
     if (!str.empty())
       str[0] = llvm::toLower(str[0]);
-    return str;
+    return escapeWgsl(str);
   }
   case IdentKind::Type:
-    return convertToCamelFromSnakeCase(ident, /*capitalizeFirst=*/true);
+    return escapeWgsl(convertToCamelFromSnakeCase(ident, /*capitalizeFirst=*/true));
   case IdentKind::Const:
     return "k" + convertToCamelFromSnakeCase(ident, /*capitalizeFirst=*/true);
   case IdentKind::Macro:
     // WGSL has no preprocessor; the "macros" become ordinary snake_case helper
     // functions in the step-template prelude (load, store, load_ext, ...), so
     // they are lowercased rather than upper-cased like the C++ #define names.
-    return convertToSnakeFromCamelCase(ident);
+    return escapeWgsl(convertToSnakeFromCamelCase(ident));
   }
   throw(std::runtime_error("Unknown ident kind"));
 }
@@ -363,9 +406,10 @@ void WgslLanguageSyntax::emitLayoutDef(CodegenEmitter& cg,
   // WGSL has no generics, so the CUDA `BoundLayout<T>` template is
   // monomorphized: emit a companion wrapper pairing this layout type with a
   // runtime buffer id. The bind_layout / layoutLookup / layoutSubscript / load
-  // / store op handlers in addWgslSyntax construct and thread these.
+  // / store op handlers in addWgslSyntax construct and thread these. The layout
+  // field is named `lyt` because `layout` is a WGSL reserved keyword.
   cg << "struct BoundLayout_" << cg.getTypeName(ty) << " {\n";
-  cg << "  layout: " << cg.getTypeName(ty) << ",\n";
+  cg << "  lyt: " << cg.getTypeName(ty) << ",\n";
   cg << "  buf: u32,\n";
   cg << "}\n";
 }

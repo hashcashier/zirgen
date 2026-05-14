@@ -150,7 +150,7 @@ void addWgslSyntax(CodegenOptions& opts) {
     CodegenIdent<IdentKind::Field> member(op.getMemberAttr());
     if (llvm::isa<ZStruct::LayoutType, ZStruct::LayoutArrayType>(op.getBase().getType())) {
       cg << "BoundLayout_" << cg.getTypeName(op.getOut().getType()) << "(" << op.getBase()
-         << ".layout." << member << ", " << op.getBase() << ".buf)";
+         << ".lyt." << member << ", " << op.getBase() << ".buf)";
     } else {
       cg << op.getBase() << "." << member;
     }
@@ -167,7 +167,7 @@ void addWgslSyntax(CodegenOptions& opts) {
     };
     if (llvm::isa<ZStruct::LayoutArrayType>(op.getBase().getType())) {
       cg << "BoundLayout_" << cg.getTypeName(op.getOut().getType()) << "(" << op.getBase()
-         << ".layout[" << EmitPart(emitIndex) << "], " << op.getBase() << ".buf)";
+         << ".lyt[" << EmitPart(emitIndex) << "], " << op.getBase() << ".buf)";
     } else {
       cg << op.getBase() << "[" << EmitPart(emitIndex) << "]";
     }
@@ -184,7 +184,7 @@ void addWgslSyntax(CodegenOptions& opts) {
       cg << "load_as_ext(";
     else
       cg << "load(";
-    cg << op.getRef() << ".layout.col, " << op.getRef() << ".buf, " << op.getDistance() << ")";
+    cg << op.getRef() << ".lyt.col, " << op.getRef() << ".buf, " << op.getDistance() << ")";
   });
 
   // store(reg, val): reg is a BoundLayout_Reg.
@@ -193,7 +193,7 @@ void addWgslSyntax(CodegenOptions& opts) {
       cg << "store_ext(";
     else
       cg << "store(";
-    cg << op.getRef() << ".layout.col, " << op.getRef() << ".buf, " << op.getVal() << ")";
+    cg << op.getRef() << ".lyt.col, " << op.getRef() << ".buf, " << op.getVal() << ")";
   });
 
   // get_buffer(name): buffers are a small named set; emit a u32 buffer id that

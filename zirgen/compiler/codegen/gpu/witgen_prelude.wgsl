@@ -53,8 +53,9 @@ struct Reg {
 // The leaf monomorphized BoundLayout wrapper. The per-circuit composite
 // BoundLayout_<T> structs are emitted into types.wgsl.inc by emitLayoutDef;
 // BoundLayout_Reg is the universal leaf and lives here in the prelude.
+// The layout field is named `lyt` because `layout` is a WGSL reserved keyword.
 struct BoundLayout_Reg {
-  layout: Reg,
+  lyt: Reg,
   buf: u32,
 }
 
@@ -215,7 +216,9 @@ fn inv_0(x: Val) -> Val {
   return inv(x);
 }
 
-fn mod(lhs: Val, rhs: Val) -> Val {
+// `mod` is a WGSL reserved keyword, so canonIdent escapes the DSL builtin to
+// `mod_`; the prelude definition matches.
+fn mod_(lhs: Val, rhs: Val) -> Val {
   return encode(decode(lhs) % decode(rhs));
 }
 
