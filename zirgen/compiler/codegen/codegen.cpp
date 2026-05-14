@@ -159,19 +159,24 @@ void addWgslSyntax(CodegenOptions& opts) {
        << CodegenIdent<IdentKind::Const>(symAttr.getAttr()) << ", " << op.getBuffer() << ")";
   });
 
-  // layoutLookup: narrow the layout to a member field, keep the buffer.
+  // layoutLookup: narrow a bound layout to a member field. For a layout base
+  // this calls the per-field helper emitLayoutDef generates -- crucially the
+  // base expression is emitted ONCE. (LookupOp is CodegenAlwaysInline, so
+  // inlining `BoundLayout_<Ti>(base.lyt.field, base.buf)` would emit the base
+  // twice and explode 2^depth on the deep chains map-unrolling produces.)
   opts.addOpSyntax<ZStruct::LookupOp>([](CodegenEmitter& cg, ZStruct::LookupOp op) {
     CodegenIdent<IdentKind::Field> member(op.getMemberAttr());
     if (llvm::isa<ZStruct::LayoutType, ZStruct::LayoutArrayType>(op.getBase().getType())) {
-      cg << "BoundLayout_" << cg.getTypeName(op.getOut().getType()) << "(" << op.getBase()
-         << ".lyt." << member << ", " << op.getBase() << ".buf)";
+      cg << "lookup_" << cg.getTypeName(op.getBase().getType()) << "_" << member << "("
+         << op.getBase() << ")";
     } else {
       cg << op.getBase() << "." << member;
     }
   });
 
-  // layoutSubscript: index a layout array, keep the buffer. A Val index is in
-  // Montgomery form and must be decoded to a plain u32 first.
+  // layoutSubscript: index a layout array via the helper emitArrayDef generates
+  // (base emitted once -- same anti-explosion reason as layoutLookup). A Val
+  // index is in Montgomery form and must be decoded to a plain u32 first.
   opts.addOpSyntax<ZStruct::SubscriptOp>([](CodegenEmitter& cg, ZStruct::SubscriptOp op) {
     auto emitIndex = [&cg, &op]() {
       if (llvm::isa<Zll::ValType>(op.getIndex().getType()))
@@ -180,15 +185,16 @@ void addWgslSyntax(CodegenOptions& opts) {
         cg << op.getIndex();
     };
     if (llvm::isa<ZStruct::LayoutArrayType>(op.getBase().getType())) {
-      cg << "BoundLayout_" << cg.getTypeName(op.getOut().getType()) << "(" << op.getBase()
-         << ".lyt[" << EmitPart(emitIndex) << "], " << op.getBase() << ".buf)";
+      cg << "subscript_" << cg.getTypeName(op.getBase().getType()) << "(" << op.getBase()
+         << ", " << EmitPart(emitIndex) << ")";
     } else {
       cg << op.getBase() << "[" << EmitPart(emitIndex) << "]";
     }
   });
 
-  // load(reg, distance): reg is a BoundLayout_Reg; reg.layout.col is the column
-  // and reg.buf the buffer id. load/load_ext/load_as_ext mirror LoadOp::emitExpr.
+  // load(reg, distance): reg is a BoundLayout_Reg, passed to the prelude helper
+  // as a whole struct so the (possibly large) ref expression is emitted once.
+  // load / load_ext / load_as_ext mirror LoadOp::emitExpr.
   opts.addOpSyntax<ZStruct::LoadOp>([](CodegenEmitter& cg, ZStruct::LoadOp op) {
     bool resultExt = bool(op.getType().getExtended());
     bool refExt = bool(op.getRef().getType().getElement().getExtended());
@@ -198,16 +204,16 @@ void addWgslSyntax(CodegenOptions& opts) {
       cg << "load_as_ext(";
     else
       cg << "load(";
-    cg << op.getRef() << ".lyt.col, " << op.getRef() << ".buf, " << op.getDistance() << ")";
+    cg << op.getRef() << ", " << op.getDistance() << ")";
   });
 
-  // store(reg, val): reg is a BoundLayout_Reg.
+  // store(reg, val): reg is a BoundLayout_Reg, passed as a whole struct.
   opts.addOpSyntax<ZStruct::StoreOp>([](CodegenEmitter& cg, ZStruct::StoreOp op) {
     if (op.getVal().getType().getFieldK() > 1)
       cg << "store_ext(";
     else
       cg << "store(";
-    cg << op.getRef() << ".lyt.col, " << op.getRef() << ".buf, " << op.getVal() << ")";
+    cg << op.getRef() << ", " << op.getVal() << ")";
   });
 
   // get_buffer(name): buffers are a small named set; emit a u32 buffer id that

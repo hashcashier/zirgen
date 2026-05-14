@@ -286,7 +286,13 @@ fn buf_set(buf_id: u32, idx: u32, v: u32) {
   }
 }
 
-fn load(col: u32, buf_id: u32, back: u32) -> Val {
+// load_at / store_at take a flat (col, buf) pair. The public load / store /
+// load_ext / ... take a BoundLayout_Reg by value: the LoadOp/StoreOp op
+// handlers then emit the ref expression once (`load(reg, back)`) instead of
+// twice (`load(reg.lyt.col, reg.buf, back)`), which roughly halves the size of
+// the generated step functions and keeps the WGSL validator/compiler tractable.
+
+fn load_at(col: u32, buf_id: u32, back: u32) -> Val {
   // accum's zero-back rule (BufferRow::with_zero_back_after).
   if (buf_id == buf_accum && params.accum_zero_back != 0u
       && col > params.accum_zero_back && back > 0u) {
@@ -304,20 +310,7 @@ fn load(col: u32, buf_id: u32, back: u32) -> Val {
   return buf_get(buf_id, col * rows + row);
 }
 
-fn load_ext(col: u32, buf_id: u32, back: u32) -> ExtVal {
-  return ExtVal(load(col, buf_id, back),
-                load(col + 1u, buf_id, back),
-                load(col + 2u, buf_id, back),
-                load(col + 3u, buf_id, back));
-}
-
-// Base-field value promoted to the canonical (x, 0, 0, 0) ExtVal embedding,
-// matching F::ExtElem::from_subfield(F::Elem).
-fn load_as_ext(col: u32, buf_id: u32, back: u32) -> ExtVal {
-  return ExtVal(load(col, buf_id, back), 0u, 0u, 0u);
-}
-
-fn store(col: u32, buf_id: u32, v: Val) {
+fn store_at(col: u32, buf_id: u32, v: Val) {
   let rows = buf_rows(buf_id);
   var row: u32;
   if (buf_is_global(buf_id)) {
@@ -328,11 +321,32 @@ fn store(col: u32, buf_id: u32, v: Val) {
   buf_set(buf_id, col * rows + row, v);
 }
 
-fn store_ext(col: u32, buf_id: u32, v: ExtVal) {
-  store(col, buf_id, v.x);
-  store(col + 1u, buf_id, v.y);
-  store(col + 2u, buf_id, v.z);
-  store(col + 3u, buf_id, v.w);
+fn load(reg: BoundLayout_Reg, back: u32) -> Val {
+  return load_at(reg.lyt.col, reg.buf, back);
+}
+
+fn load_ext(reg: BoundLayout_Reg, back: u32) -> ExtVal {
+  return ExtVal(load_at(reg.lyt.col, reg.buf, back),
+                load_at(reg.lyt.col + 1u, reg.buf, back),
+                load_at(reg.lyt.col + 2u, reg.buf, back),
+                load_at(reg.lyt.col + 3u, reg.buf, back));
+}
+
+// Base-field value promoted to the canonical (x, 0, 0, 0) ExtVal embedding,
+// matching F::ExtElem::from_subfield(F::Elem).
+fn load_as_ext(reg: BoundLayout_Reg, back: u32) -> ExtVal {
+  return ExtVal(load_at(reg.lyt.col, reg.buf, back), 0u, 0u, 0u);
+}
+
+fn store(reg: BoundLayout_Reg, v: Val) {
+  store_at(reg.lyt.col, reg.buf, v);
+}
+
+fn store_ext(reg: BoundLayout_Reg, v: ExtVal) {
+  store_at(reg.lyt.col, reg.buf, v.x);
+  store_at(reg.lyt.col + 1u, reg.buf, v.y);
+  store_at(reg.lyt.col + 2u, reg.buf, v.z);
+  store_at(reg.lyt.col + 3u, reg.buf, v.w);
 }
 
 // ----- Externs --------------------------------------------------------------

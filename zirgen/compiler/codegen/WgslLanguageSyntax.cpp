@@ -388,9 +388,16 @@ void WgslLanguageSyntax::emitArrayDef(CodegenEmitter& cg,
   cg << "alias " << cg.getTypeName(ty) << " = array<" << cg.getTypeName(elemType) << ", "
      << numElems << ">;\n";
   // A layout-trait array is still a layout: it can be bound to a buffer and
-  // passed/stored as a BoundLayout, so it needs the monomorphized wrapper too.
-  if (ty.hasTrait<CodegenLayoutTypeTrait>())
+  // passed/stored as a BoundLayout, so it needs the monomorphized wrapper too,
+  // plus a narrowing helper for indexing (see emitLayoutDef -- the SubscriptOp
+  // handler calls this so the base expression is emitted once, not twice).
+  if (ty.hasTrait<CodegenLayoutTypeTrait>()) {
     emitBoundLayoutWrapper(cg, ty);
+    cg << "fn subscript_" << cg.getTypeName(ty) << "(b: BoundLayout_" << cg.getTypeName(ty)
+       << ", i: u32) -> BoundLayout_" << cg.getTypeName(elemType) << " {\n";
+    cg << "  return BoundLayout_" << cg.getTypeName(elemType) << "(b.lyt[i], b.buf);\n";
+    cg << "}\n";
+  }
 }
 
 void WgslLanguageSyntax::emitArrayConstruct(CodegenEmitter& cg,
@@ -417,6 +424,20 @@ void WgslLanguageSyntax::emitLayoutDef(CodegenEmitter& cg,
   // layoutLookup / layoutSubscript / load / store op handlers in addWgslSyntax
   // construct and thread these.
   emitBoundLayoutWrapper(cg, ty);
+  // ...plus a per-field narrowing helper. The LookupOp op handler calls these
+  // instead of inlining `BoundLayout_<Ti>(base.lyt.field, base.buf)`: LookupOp
+  // is CodegenAlwaysInline, so inlining emits the base expression twice, which
+  // explodes 2^depth on the deep SubscriptOp/LookupOp chains that map-unrolling
+  // produces. Inside the helper the base is a parameter (a name), so there is
+  // no duplication; the call site emits the base exactly once.
+  for (size_t i = 0; i != names.size(); i++) {
+    Type fieldTy = types[i];
+    cg << "fn lookup_" << cg.getTypeName(ty) << "_" << names[i] << "(b: BoundLayout_"
+       << cg.getTypeName(ty) << ") -> BoundLayout_" << cg.getTypeName(fieldTy) << " {\n";
+    cg << "  return BoundLayout_" << cg.getTypeName(fieldTy) << "(b.lyt." << names[i]
+       << ", b.buf);\n";
+    cg << "}\n";
+  }
 }
 
 } // namespace zirgen::codegen
