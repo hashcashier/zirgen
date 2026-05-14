@@ -350,6 +350,10 @@ fn extern_noop() {
 fn extern_lookupDelta(table: Val, index: Val, count: Val) {
 }
 
+fn extern_lookupCurrent(table: Val, index: Val) -> Val {
+  return 0u;
+}
+
 fn extern_memoryDelta(addr: Val, txn_cycle: Val, data_low: Val, data_high: Val, count: Val) {
 }
 

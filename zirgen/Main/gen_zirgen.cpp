@@ -275,9 +275,29 @@ int main(int argc, char* argv[]) {
              stepFuncs,
              codegen::getCudaCodegenOpts(),
              stepSplitCount);
+
+  // WGSL has no closures or higher-order functions, so map/reduce cannot be
+  // emitted the way the Rust/C++/CUDA targets do (a `map` helper + a lambda).
+  // Unroll them away on a clone of the step functions -- the array sizes are
+  // static -- so the WGSL backend never sees a MapOp/ReduceOp. The other
+  // targets keep the un-unrolled form.
+  mlir::ModuleOp wgslStepFuncs = stepFuncs.clone();
+  {
+    mlir::PassManager pm(&context);
+    applyDefaultTimingPassManagerCLOptions(pm);
+    if (failed(applyPassManagerCLOptions(pm))) {
+      llvm::errs() << "Pass manager does not agree with command line options.\n";
+      return 1;
+    }
+    pm.addPass(zirgen::ZStruct::createUnrollPass());
+    if (failed(pm.run(wgslStepFuncs))) {
+      llvm::errs() << "Failed to unroll map/reduce for the WGSL target.\n";
+      return 1;
+    }
+  }
   emitTarget(WgslCodegenTarget(circuitNameAttr),
              *typedModule,
-             stepFuncs,
+             wgslStepFuncs,
              codegen::getWgslCodegenOpts(),
              stepSplitCount);
 

@@ -351,17 +351,11 @@ struct WgslLanguageSyntax : public LanguageSyntax {
                           mlir::Type ty,
                           mlir::Type elemType,
                           llvm::ArrayRef<CodegenValue> values) override;
-  void emitMapConstruct(CodegenEmitter& cg,
-                        CodegenValue array,
-                        std::optional<CodegenValue> layout,
-                        llvm::ArrayRef<CodegenIdent<IdentKind::Var>> argNames,
-                        mlir::Region& body) override;
-  void emitReduceConstruct(CodegenEmitter& cg,
-                           CodegenValue array,
-                           CodegenValue init,
-                           std::optional<CodegenValue> layout,
-                           llvm::ArrayRef<CodegenIdent<IdentKind::Var>> argNames,
-                           mlir::Region& body) override;
+  // emitMapConstruct / emitReduceConstruct are intentionally NOT overridden:
+  // WGSL has no closures, so map/reduce are unrolled away (createUnrollPass) on
+  // a clone of the step functions before the WGSL target runs. If one ever
+  // reached this syntax, the LanguageSyntax base aborts -- the correct loud
+  // failure.
   void emitLayoutDef(CodegenEmitter& cg,
                      mlir::Type ty,
                      llvm::ArrayRef<CodegenIdent<IdentKind::Field>> fields,

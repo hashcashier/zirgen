@@ -92,6 +92,17 @@ std::string escapeWgsl(std::string ident) {
   return isWgslReserved(ident) ? ident + "_" : ident;
 }
 
+// WGSL has no generics, so the CUDA `BoundLayout<T>` template is monomorphized:
+// every layout-trait type T (layout struct *or* layout array) gets a companion
+// `struct BoundLayout_<T> { lyt: T, buf: u32 }` pairing it with a runtime
+// buffer id. The `lyt` field is named that because `layout` is a WGSL keyword.
+void emitBoundLayoutWrapper(CodegenEmitter& cg, mlir::Type ty) {
+  cg << "struct BoundLayout_" << cg.getTypeName(ty) << " {\n";
+  cg << "  lyt: " << cg.getTypeName(ty) << ",\n";
+  cg << "  buf: u32,\n";
+  cg << "}\n";
+}
+
 // Emit the WGSL type reference for an argument, result, struct field, or saved
 // value of MLIR type `ty`. WGSL has no generics, so a layout-trait type becomes
 // its monomorphized BoundLayout_<T> wrapper (paired with a runtime buffer id);
@@ -328,6 +339,11 @@ void WgslLanguageSyntax::emitStructDefImpl(CodegenEmitter& cg,
                                            bool layout) {
   cg << "struct " << cg.getTypeName(ty) << " {\n";
   assert(names.size() == types.size());
+  // WGSL structs must have at least one member; some circuit struct/layout
+  // types have no fields. Give those a dummy member (emitStructConstruct
+  // supplies the matching `0u` argument).
+  if (names.empty())
+    cg << "  _unused: u32,\n";
   for (size_t i = 0; i != names.size(); i++) {
     Type subTy = types[i];
     cg << "  " << names[i] << ": ";
@@ -358,7 +374,10 @@ void WgslLanguageSyntax::emitStructConstruct(CodegenEmitter& cg,
   // WGSL struct construction is positional: Name(v0, v1, ...). This relies on
   // `values` arriving in field-declaration order (verified in iter 4).
   cg << cg.getTypeName(ty) << "(";
-  cg.interleaveComma(values);
+  if (values.empty())
+    cg << "0u"; // matches the _unused dummy member emitStructDefImpl adds
+  else
+    cg.interleaveComma(values);
   cg << ")";
 }
 
@@ -368,6 +387,10 @@ void WgslLanguageSyntax::emitArrayDef(CodegenEmitter& cg,
                                       size_t numElems) {
   cg << "alias " << cg.getTypeName(ty) << " = array<" << cg.getTypeName(elemType) << ", "
      << numElems << ">;\n";
+  // A layout-trait array is still a layout: it can be bound to a buffer and
+  // passed/stored as a BoundLayout, so it needs the monomorphized wrapper too.
+  if (ty.hasTrait<CodegenLayoutTypeTrait>())
+    emitBoundLayoutWrapper(cg, ty);
 }
 
 void WgslLanguageSyntax::emitArrayConstruct(CodegenEmitter& cg,
@@ -379,28 +402,10 @@ void WgslLanguageSyntax::emitArrayConstruct(CodegenEmitter& cg,
   cg << ")";
 }
 
-void WgslLanguageSyntax::emitMapConstruct(CodegenEmitter& cg,
-                                          CodegenValue array,
-                                          std::optional<CodegenValue> layout,
-                                          llvm::ArrayRef<CodegenIdent<IdentKind::Var>> argNames,
-                                          mlir::Region& body) {
-  // TODO(wgsl): WGSL has no closures or higher-order functions. A surviving
-  // MapOp must be unrolled (a ZStruct unroll pass exists) or lowered to an
-  // explicit loop before WGSL emission. The body region is intentionally not
-  // walked in this skeleton iteration.
-  cg << "wgsl_todo_map_construct(" << array << ")";
-}
-
-void WgslLanguageSyntax::emitReduceConstruct(CodegenEmitter& cg,
-                                             CodegenValue array,
-                                             CodegenValue init,
-                                             std::optional<CodegenValue> layout,
-                                             llvm::ArrayRef<CodegenIdent<IdentKind::Var>> argNames,
-                                             mlir::Region& body) {
-  // TODO(wgsl): see emitMapConstruct -- ReduceOp needs unrolling or explicit
-  // loop lowering before WGSL emission.
-  cg << "wgsl_todo_reduce_construct(" << array << ", " << init << ")";
-}
+// emitMapConstruct / emitReduceConstruct are intentionally not implemented for
+// WGSL: createUnrollPass runs on the WGSL clone of the step functions (see
+// gen_zirgen.cpp), so no MapOp/ReduceOp ever reaches this syntax. The
+// LanguageSyntax base provides an aborting default if that invariant is broken.
 
 void WgslLanguageSyntax::emitLayoutDef(CodegenEmitter& cg,
                                        mlir::Type ty,
@@ -408,15 +413,10 @@ void WgslLanguageSyntax::emitLayoutDef(CodegenEmitter& cg,
                                        llvm::ArrayRef<mlir::Type> types) {
   // The layout itself is a plain nested struct of sub-layouts / Reg leaves.
   emitStructDefImpl(cg, ty, names, types, /*layout=*/true);
-  // WGSL has no generics, so the CUDA `BoundLayout<T>` template is
-  // monomorphized: emit a companion wrapper pairing this layout type with a
-  // runtime buffer id. The bind_layout / layoutLookup / layoutSubscript / load
-  // / store op handlers in addWgslSyntax construct and thread these. The layout
-  // field is named `lyt` because `layout` is a WGSL reserved keyword.
-  cg << "struct BoundLayout_" << cg.getTypeName(ty) << " {\n";
-  cg << "  lyt: " << cg.getTypeName(ty) << ",\n";
-  cg << "  buf: u32,\n";
-  cg << "}\n";
+  // ...plus its monomorphized BoundLayout wrapper. The bind_layout /
+  // layoutLookup / layoutSubscript / load / store op handlers in addWgslSyntax
+  // construct and thread these.
+  emitBoundLayoutWrapper(cg, ty);
 }
 
 } // namespace zirgen::codegen

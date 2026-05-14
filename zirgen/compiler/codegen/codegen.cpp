@@ -119,8 +119,22 @@ void addWgslSyntax(CodegenOptions& opts) {
   };
   auto binOp = [isExtVal](llvm::StringRef valFn, llvm::StringRef extFn) {
     return [=](CodegenEmitter& cg, auto op) {
-      llvm::StringRef fn = isExtVal(op->getResult(0).getType()) ? extFn : valFn;
-      cg << EmitPart(fn) << "(" << op->getOperand(0) << ", " << op->getOperand(1) << ")";
+      bool ext = isExtVal(op->getResult(0).getType());
+      // The IR's Add/Sub/Mul are polymorphic: an extension-field op may take a
+      // base-field operand, relying on implicit Val->ExtVal promotion. WGSL has
+      // no implicit conversion, so promote a base operand of an ext op to the
+      // canonical (x, 0, 0, 0) ExtVal embedding here.
+      auto emitOperand = [&](mlir::Value v) {
+        if (ext && !isExtVal(v.getType()))
+          cg << "ExtVal(" << v << ", 0u, 0u, 0u)";
+        else
+          cg << v;
+      };
+      cg << EmitPart(ext ? extFn : valFn) << "(";
+      emitOperand(op->getOperand(0));
+      cg << ", ";
+      emitOperand(op->getOperand(1));
+      cg << ")";
     };
   };
   opts.addOpSyntax<Zll::AddOp>(binOp("add", "ext_add"));
@@ -210,6 +224,17 @@ void addWgslSyntax(CodegenOptions& opts) {
       cg << "eqz_ext(" << op.getIn() << ")";
     else
       cg << "eqz(" << op.getIn() << ")";
+  });
+
+  // inv (field inverse) is polymorphic over Val / ExtVal. WGSL has no
+  // overloading, so split by result type: inv_0 for the base field, ext_inv for
+  // the extension field (both defined in the prelude). The base-field name is
+  // `inv_0` to match the default emitExpr output the other targets produce.
+  opts.addOpSyntax<Zll::InvOp>([isExtVal](CodegenEmitter& cg, Zll::InvOp op) {
+    if (isExtVal(op->getResult(0).getType()))
+      cg << "ext_inv(" << op->getOperand(0) << ")";
+    else
+      cg << "inv_0(" << op->getOperand(0) << ")";
   });
 
   // invoke_extern(name, args...): the circuit's escape hatch. assert/log/print
