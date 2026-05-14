@@ -66,7 +66,10 @@ std::string WgslLanguageSyntax::canonIdent(llvm::StringRef ident, IdentKind kind
   case IdentKind::Const:
     return "k" + convertToCamelFromSnakeCase(ident, /*capitalizeFirst=*/true);
   case IdentKind::Macro:
-    return llvm::StringRef(convertToSnakeFromCamelCase(ident)).upper();
+    // WGSL has no preprocessor; the "macros" become ordinary snake_case helper
+    // functions in the step-template prelude (load, store, load_ext, ...), so
+    // they are lowercased rather than upper-cased like the C++ #define names.
+    return convertToSnakeFromCamelCase(ident);
   }
   throw(std::runtime_error("Unknown ident kind"));
 }
@@ -211,18 +214,48 @@ void WgslLanguageSyntax::emitInvokeMacro(CodegenEmitter& cg,
                                          CodegenIdent<IdentKind::Macro> callee,
                                          llvm::ArrayRef<StringRef> contextArgs,
                                          llvm::ArrayRef<EmitPart> emitArgs) {
-  // WGSL has no preprocessor/macros. The codegen "macros" (LOAD, LAYOUT_LOOKUP,
-  // INVOKE_EXTERN, ...) are emitted as ordinary call syntax here; iter 4 either
-  // inlines them or provides concrete WGSL helper functions.
+  // WGSL has no preprocessor. The codegen "macros" fall into two groups:
+  //
+  //  1. Structural macros that are language constructs in WGSL, not calls --
+  //     these are special-cased below.
+  //  2. Everything else (load / store / load_ext / store_ext / invoke_extern /
+  //     bind_layout / ...) becomes a call to a snake_case helper function
+  //     provided by the step-template prelude. The prelude functions land in
+  //     iter 4b; context args ("ctx") are dropped here because WGSL buffers are
+  //     module-scope @group/@binding storage, not threaded through a parameter.
+  llvm::StringRef name = callee.strref();
+
+  // layoutLookup(base, a.b.c) -> base.a.b.c  (struct field access path)
+  if (name == "layoutLookup") {
+    assert(emitArgs.size() == 2);
+    cg << emitArgs[0] << "." << emitArgs[1];
+    return;
+  }
+  // layoutSubscript(base, idx) -> base[idx]  (array indexing)
+  if (name == "layoutSubscript") {
+    assert(emitArgs.size() == 2);
+    cg << emitArgs[0] << "[" << emitArgs[1] << "]";
+    return;
+  }
+  // eqz(value, "diagnostic message") -> eqz(value)
+  // WGSL has no assert and no string type; the message is dropped.
+  // TODO(wgsl): route the failure to a debug error-flag buffer instead.
+  if (name == "eqz") {
+    assert(emitArgs.size() >= 1);
+    cg << "eqz(" << emitArgs[0] << ")";
+    return;
+  }
+  // setField(BabyBear) -> nothing. WGSL has no field-type registration; the
+  // prelude hardcodes the BabyBear field arithmetic.
+  if (name == "setField") {
+    cg << "/* setField */";
+    return;
+  }
+
   cg << callee;
-  if (contextArgs.empty() && emitArgs.empty())
+  if (emitArgs.empty())
     return;
   cg << "(";
-  if (!contextArgs.empty()) {
-    cg.interleaveComma(contextArgs, [&](auto contextArg) { cg << EmitPart(contextArg); });
-    if (!emitArgs.empty())
-      cg << ", ";
-  }
   cg.interleaveComma(emitArgs);
   cg << ")";
 }

@@ -23,6 +23,7 @@
 #include "zirgen/Dialect/ZHLT/IR/Codegen.h"
 #include "zirgen/Dialect/ZStruct/IR/ZStruct.h"
 #include "zirgen/Dialect/Zll/IR/Codegen.h"
+#include "zirgen/Dialect/Zll/IR/IR.h"
 #include "zirgen/Dialect/Zll/Transforms/Passes.h"
 
 using namespace mlir;
@@ -66,6 +67,41 @@ void addRustSyntax(CodegenOptions& opts) {
   });
 }
 
+// WGSL has no operator overloading, so the BabyBear field operators that C++
+// renders as infix `+ - *` (via the CodegenInfixOp trait) must instead become
+// calls to prelude helper functions: add/sub/mul for base Val, ext_add/ext_sub/
+// ext_mul for the degree-4 extension field. Registering an op-syntax handler
+// here intercepts the op before its default infix emitExpr runs (see
+// CodegenEmitter::emitExpr). Field literals likewise become plain u32 literals.
+void addWgslSyntax(CodegenOptions& opts) {
+  opts.addLiteralSyntax<PolynomialAttr>([](CodegenEmitter& cg, auto polyAttr) {
+    auto elems = polyAttr.asArrayRef();
+    if (elems.size() == 1) {
+      cg << elems[0] << "u";
+    } else {
+      // TODO(wgsl): ExtVal is a prelude struct; constructor lands with the
+      // prelude in a later iteration.
+      cg << "ExtVal(";
+      cg.interleaveComma(elems, [&](auto elem) { cg << elem << "u"; });
+      cg << ")";
+    }
+  });
+
+  auto isExtVal = [](mlir::Type ty) {
+    auto vt = llvm::dyn_cast<Zll::ValType>(ty);
+    return vt && bool(vt.getExtended());
+  };
+  auto binOp = [isExtVal](llvm::StringRef valFn, llvm::StringRef extFn) {
+    return [=](CodegenEmitter& cg, auto op) {
+      llvm::StringRef fn = isExtVal(op->getResult(0).getType()) ? extFn : valFn;
+      cg << EmitPart(fn) << "(" << op->getOperand(0) << ", " << op->getOperand(1) << ")";
+    };
+  };
+  opts.addOpSyntax<Zll::AddOp>(binOp("add", "ext_add"));
+  opts.addOpSyntax<Zll::SubOp>(binOp("sub", "ext_sub"));
+  opts.addOpSyntax<Zll::MulOp>(binOp("mul", "ext_mul"));
+}
+
 } // namespace
 
 CodegenOptions getRustCodegenOpts() {
@@ -102,9 +138,13 @@ CodegenOptions getWgslCodegenOpts() {
   static codegen::WgslLanguageSyntax kWgsl;
   codegen::CodegenOptions opts(&kWgsl);
   addCommonSyntax(opts);
-  addCppSyntax(opts);
+  addWgslSyntax(opts);
   ZStruct::addCppSyntax(opts);
-  Zhlt::addCppSyntax(opts);
+  // Deliberately NOT calling Zhlt::addCppSyntax(opts): its sole effect is to
+  // register the "ExecContext& ctx" function/call context argument. WGSL has no
+  // references and no per-call context object -- the witness buffers are
+  // module-scope @group/@binding storage buffers -- so the context arg is
+  // elided entirely for this target.
   return opts;
 }
 
