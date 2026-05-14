@@ -98,6 +98,16 @@ CodegenOptions getCudaCodegenOpts() {
   return opts;
 }
 
+CodegenOptions getWgslCodegenOpts() {
+  static codegen::WgslLanguageSyntax kWgsl;
+  codegen::CodegenOptions opts(&kWgsl);
+  addCommonSyntax(opts);
+  addCppSyntax(opts);
+  ZStruct::addCppSyntax(opts);
+  Zhlt::addCppSyntax(opts);
+  return opts;
+}
+
 } // namespace codegen
 
 namespace {

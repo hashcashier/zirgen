@@ -275,6 +275,11 @@ int main(int argc, char* argv[]) {
              stepFuncs,
              codegen::getCudaCodegenOpts(),
              stepSplitCount);
+  emitTarget(WgslCodegenTarget(circuitNameAttr),
+             *typedModule,
+             stepFuncs,
+             codegen::getWgslCodegenOpts(),
+             stepSplitCount);
 
   return 0;
 }

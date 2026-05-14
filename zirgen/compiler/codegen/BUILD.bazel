@@ -34,6 +34,7 @@ cc_library(
     srcs = [
         "CppLanguageSyntax.cpp",
         "RustLanguageSyntax.cpp",
+        "WgslLanguageSyntax.cpp",
         "codegen.cpp",
         "gen_cpp.cpp",
         "gen_gpu.cpp",

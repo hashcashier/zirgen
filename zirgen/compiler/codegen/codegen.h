@@ -281,11 +281,106 @@ struct CudaLanguageSyntax : public CppLanguageSyntax {
                            mlir::FunctionType funcType) override;
 };
 
+// WGSL (WebGPU Shading Language) syntax for GPU-resident witness generation in
+// the browser prover. WGSL is its own restricted language — no generics, no
+// references, no recursion, no Result type — so unlike CudaLanguageSyntax (which
+// extends CppLanguageSyntax), this derives from LanguageSyntax directly. Its
+// surface syntax (fn / let / var / -> / snake_case) is closer to Rust, but its
+// value semantics are closer to C++ (no borrow model), so getLanguageKind()
+// reports Cpp. This iteration emits syntactically-WGSL output; the semantic
+// lowering (BoundLayout<T> -> u32 offsets, ExecContext elision -> @group/@binding
+// storage buffers) lands in a later iteration and is marked with TODO(wgsl).
+struct WgslLanguageSyntax : public LanguageSyntax {
+  LanguageKind getLanguageKind() override { return LanguageKind::Cpp; }
+
+  std::string canonIdent(llvm::StringRef ident, IdentKind idt) override;
+
+  void emitConditional(CodegenEmitter& cg, CodegenValue condition, EmitPart emitThen) override;
+  void emitSwitchStatement(CodegenEmitter& cg,
+                           CodegenIdent<IdentKind::Var> resultName,
+                           mlir::Type resultType,
+                           llvm::ArrayRef<CodegenValue> conditions,
+                           llvm::ArrayRef<EmitArmPartFunc> emitArms) override;
+
+  void emitFuncDefinition(CodegenEmitter& cg,
+                          CodegenIdent<IdentKind::Func> funcName,
+                          llvm::ArrayRef<std::string> contextArgs,
+                          llvm::ArrayRef<CodegenIdent<IdentKind::Var>> argNames,
+                          mlir::FunctionType funcType,
+                          mlir::Region* body) override;
+  void emitFuncDeclaration(CodegenEmitter& cg,
+                           CodegenIdent<IdentKind::Func> funcName,
+                           llvm::ArrayRef<std::string> contextArgs,
+                           llvm::ArrayRef<CodegenIdent<IdentKind::Var>> argNames,
+                           mlir::FunctionType funcType) override;
+
+  void emitReturn(CodegenEmitter& cg, llvm::ArrayRef<CodegenValue> values) override;
+
+  void emitSaveResults(CodegenEmitter& cg,
+                       llvm::ArrayRef<CodegenIdent<IdentKind::Var>> names,
+                       llvm::ArrayRef<mlir::Type> types,
+                       EmitPart emitExpression) override;
+
+  void emitSaveConst(CodegenEmitter& cg,
+                     CodegenIdent<IdentKind::Const> name,
+                     CodegenValue value) override;
+  void
+  emitConstDecl(CodegenEmitter& cg, CodegenIdent<IdentKind::Const> name, mlir::Type type) override;
+
+  void emitCall(CodegenEmitter& cg,
+                CodegenIdent<IdentKind::Func> callee,
+                llvm::ArrayRef<std::string> contextArgs,
+                llvm::ArrayRef<CodegenValue> args) override;
+
+  void emitInvokeMacro(CodegenEmitter& cg,
+                       CodegenIdent<IdentKind::Macro> callee,
+                       llvm::ArrayRef<llvm::StringRef> contextArgs,
+                       llvm::ArrayRef<EmitPart> emitArgs) override;
+
+  void emitStructDef(CodegenEmitter& cg,
+                     mlir::Type ty,
+                     llvm::ArrayRef<CodegenIdent<IdentKind::Field>> fields,
+                     llvm::ArrayRef<mlir::Type> types) override;
+  void emitStructConstruct(CodegenEmitter& cg,
+                           mlir::Type ty,
+                           llvm::ArrayRef<CodegenIdent<IdentKind::Field>> names,
+                           llvm::ArrayRef<CodegenValue> values) override;
+  void
+  emitArrayDef(CodegenEmitter& cg, mlir::Type ty, mlir::Type elemType, size_t numElems) override;
+  void emitArrayConstruct(CodegenEmitter& cg,
+                          mlir::Type ty,
+                          mlir::Type elemType,
+                          llvm::ArrayRef<CodegenValue> values) override;
+  void emitMapConstruct(CodegenEmitter& cg,
+                        CodegenValue array,
+                        std::optional<CodegenValue> layout,
+                        llvm::ArrayRef<CodegenIdent<IdentKind::Var>> argNames,
+                        mlir::Region& body) override;
+  void emitReduceConstruct(CodegenEmitter& cg,
+                           CodegenValue array,
+                           CodegenValue init,
+                           std::optional<CodegenValue> layout,
+                           llvm::ArrayRef<CodegenIdent<IdentKind::Var>> argNames,
+                           mlir::Region& body) override;
+  void emitLayoutDef(CodegenEmitter& cg,
+                     mlir::Type ty,
+                     llvm::ArrayRef<CodegenIdent<IdentKind::Field>> fields,
+                     llvm::ArrayRef<mlir::Type> types) override;
+
+private:
+  void emitStructDefImpl(CodegenEmitter& cg,
+                         mlir::Type ty,
+                         llvm::ArrayRef<CodegenIdent<IdentKind::Field>> names,
+                         llvm::ArrayRef<mlir::Type> types,
+                         bool layout);
+};
+
 // Returns codegen options for emitting specific language variants,
 // including dialect-specific handlers for the dialects we use.
 CodegenOptions getRustCodegenOpts();
 CodegenOptions getCppCodegenOpts();
 CodegenOptions getCudaCodegenOpts();
+CodegenOptions getWgslCodegenOpts();
 
 } // namespace codegen
 

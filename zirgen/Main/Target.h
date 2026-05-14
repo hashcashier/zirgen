@@ -73,4 +73,16 @@ struct CudaCodegenTarget : public CodegenTarget {
   Template getStepTemplate() const override;
 };
 
+// WGSL (WebGPU Shading Language) target for GPU-resident witness generation in
+// the browser prover. WGSL has no separate declaration file (no forward
+// declarations), so getDeclExtension() == getImplExtension() and emitTarget
+// skips the decl-emission steps.
+struct WgslCodegenTarget : public CodegenTarget {
+  using CodegenTarget::CodegenTarget;
+
+  llvm::StringRef getDeclExtension() const override;
+  llvm::StringRef getImplExtension() const override;
+  Template getStepTemplate() const override;
+};
+
 } // namespace zirgen
