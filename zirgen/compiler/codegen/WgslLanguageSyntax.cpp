@@ -239,11 +239,16 @@ void WgslLanguageSyntax::emitSaveResults(CodegenEmitter& cg,
     emitTypeRef(cg, types[0]);
     cg << " = " << emitExpression << ";\n";
   } else {
-    // TODO(wgsl): no tuple destructuring in WGSL; bind the first name for now.
-    cg << "let " << names[0] << ": ";
-    emitTypeRef(cg, types[0]);
-    cg << " = /* TODO(wgsl): " << names.size() << "-tuple destructure */ " << emitExpression
-       << ";\n";
+    // WGSL has no tuples or tuple destructuring. Every multi-result site in the
+    // rv32im witgen is an array-returning extern (divide / getMemoryTxn /
+    // bigIntExtern / getMajorMinor / nextPagingIdx), so bind the result to a
+    // temp and project each name out of the WGSL array<T,N>.
+    cg << "let " << names[0] << "_tuple = " << emitExpression << ";\n";
+    for (size_t i = 0; i != names.size(); i++) {
+      cg << "let " << names[i] << ": ";
+      emitTypeRef(cg, types[i]);
+      cg << " = " << names[0] << "_tuple[" << i << "u];\n";
+    }
   }
 }
 

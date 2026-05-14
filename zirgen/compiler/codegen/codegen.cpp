@@ -211,6 +211,28 @@ void addWgslSyntax(CodegenOptions& opts) {
     else
       cg << "eqz(" << op.getIn() << ")";
   });
+
+  // invoke_extern(name, args...): the circuit's escape hatch. assert/log/print
+  // are pure no-ops in witgen (matching CUDA witgen.h) AND carry WGSL-illegal
+  // string-literal operands, so they collapse to a single extern_noop() call.
+  // The remaining externs read from the preflight trace; they emit as
+  // extern_<name>(operands) -- the `ctx` context arg is dropped, and the
+  // prelude supplies an `extern_<name>` helper. Array-returning externs
+  // (divide/getMemoryTxn/bigIntExtern/...) return a WGSL array<Val,N>, which
+  // emitSaveResults projects per result.
+  opts.addOpSyntax<Zll::ExternOp>([](CodegenEmitter& cg, Zll::ExternOp op) {
+    // op.getName() is Operation::getName() ("zll.extern"); the extern's own name
+    // is the $name string attribute, reached via getNameAttr().
+    llvm::StringRef name = op.getNameAttr().getValue();
+    if (name.equals_insensitive("assert") || name.equals_insensitive("log") ||
+        name.equals_insensitive("print")) {
+      cg << "extern_noop()";
+      return;
+    }
+    cg << "extern_" << CodegenIdent<IdentKind::Func>(op.getNameAttr()) << "(";
+    cg.interleaveComma(op.getOperands());
+    cg << ")";
+  });
 }
 
 } // namespace

@@ -222,11 +222,13 @@ fn mod_(lhs: Val, rhs: Val) -> Val {
   return encode(decode(lhs) % decode(rhs));
 }
 
-fn bit_and(lhs: Val, rhs: Val) -> Val {
+// bitAnd / inRange keep the camelCase DSL builtin names (canonIdent leaves
+// already-camelCase identifiers unchanged).
+fn bitAnd(lhs: Val, rhs: Val) -> Val {
   return encode(decode(lhs) & decode(rhs));
 }
 
-fn in_range(low: Val, mid: Val, high: Val) -> Val {
+fn inRange(low: Val, mid: Val, high: Val) -> Val {
   let l = decode(low);
   let m = decode(mid);
   let h = decode(high);
@@ -234,6 +236,11 @@ fn in_range(low: Val, mid: Val, high: Val) -> Val {
     return MONT_ONE;
   }
   return 0u;
+}
+
+// Montgomery Val -> plain u32, used for array/index conversions.
+fn to_size_t(v: Val) -> u32 {
+  return decode(v);
 }
 
 // eqz is a witness consistency assertion (it never writes witness state). For
@@ -326,4 +333,60 @@ fn store_ext(col: u32, buf_id: u32, v: ExtVal) {
   store(col + 1u, buf_id, v.y);
   store(col + 2u, buf_id, v.z);
   store(col + 3u, buf_id, v.w);
+}
+
+// ----- Externs --------------------------------------------------------------
+// `invoke_extern` lowers here. assert/log/print are no-ops in witgen (matching
+// CUDA witgen.h) and collapse to extern_noop(). The remaining externs read from
+// the preflight trace -- in CUDA, ExecContext::preflight. The bodies below are
+// TODO(wgsl) stubs with the correct signatures and zeroed results; uploading
+// the PreflightTrace as GPU buffers and implementing the reads is a later
+// iteration (the dispatch/buffer wiring is risc0-side). Array-returning
+// externs return a WGSL array<Val,N>, which emitSaveResults projects per result.
+
+fn extern_noop() {
+}
+
+fn extern_lookupDelta(table: Val, index: Val, count: Val) {
+}
+
+fn extern_memoryDelta(addr: Val, txn_cycle: Val, data_low: Val, data_high: Val, count: Val) {
+}
+
+fn extern_getDiffCount(txn_cycle: Val) -> Val {
+  return 0u;
+}
+
+fn extern_isFirstCycle_0() -> Val {
+  return 0u;
+}
+
+fn extern_hostReadPrepare(fp: Val, len: Val) -> Val {
+  return 0u;
+}
+
+fn extern_hostWrite(fd: Val, addr_low: Val, addr_high: Val, len: Val) -> Val {
+  return 0u;
+}
+
+fn extern_getMemoryTxn(addr: Val) -> array<Val, 5> {
+  return array<Val, 5>(0u, 0u, 0u, 0u, 0u);
+}
+
+fn extern_divide(numer_low: Val, numer_high: Val, denom_low: Val, denom_high: Val,
+                 sign_type: Val) -> array<Val, 4> {
+  return array<Val, 4>(0u, 0u, 0u, 0u);
+}
+
+fn extern_getMajorMinor() -> array<Val, 2> {
+  return array<Val, 2>(0u, 0u);
+}
+
+fn extern_nextPagingIdx() -> array<Val, 2> {
+  return array<Val, 2>(0u, 0u);
+}
+
+fn extern_bigIntExtern() -> array<Val, 16> {
+  return array<Val, 16>(0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+                        0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u);
 }
