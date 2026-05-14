@@ -47,6 +47,24 @@ using namespace zirgen::Zll;
 
 namespace zirgen::codegen {
 
+namespace {
+
+// Emit the WGSL type reference for an argument, result, struct field, or saved
+// value of MLIR type `ty`. WGSL has no generics, so a layout-trait type becomes
+// its monomorphized BoundLayout_<T> wrapper (paired with a runtime buffer id);
+// a buffer type becomes a plain u32 buffer id; everything else uses the
+// declared type name.
+void emitTypeRef(CodegenEmitter& cg, mlir::Type ty) {
+  if (ty.hasTrait<CodegenLayoutTypeTrait>())
+    cg << "BoundLayout_" << cg.getTypeName(ty);
+  else if (llvm::isa<BufferType>(ty))
+    cg << "u32";
+  else
+    cg << cg.getTypeName(ty);
+}
+
+} // namespace
+
 std::string WgslLanguageSyntax::canonIdent(llvm::StringRef ident, IdentKind kind) {
   // TODO(wgsl): WGSL has a large reserved-word set (incl. `super`, produced from
   // the IR field `_super`) and forbids leading `__` / a lone `_`. iter 4 adds
@@ -89,7 +107,9 @@ void WgslLanguageSyntax::emitSwitchStatement(CodegenEmitter& cg,
                                              llvm::ArrayRef<CodegenValue> conditions,
                                              llvm::ArrayRef<EmitArmPartFunc> emitArms) {
   // `var` (mutable) since the arms assign into it; WGSL zero-inits declared vars.
-  cg << "var " << resultName << ": " << cg.getTypeName(resultType) << ";\n";
+  cg << "var " << resultName << ": ";
+  emitTypeRef(cg, resultType);
+  cg << ";\n";
   for (const auto& [cond, emitArm] : llvm::zip(conditions, emitArms)) {
     cg << "if ((" << cond << ") != 0u) {\n";
     auto result = emitArm();
@@ -131,20 +151,19 @@ void WgslLanguageSyntax::emitFuncDefinition(CodegenEmitter& cg,
     CodegenIdent<IdentKind::Var> name = std::get<0>(nt);
     Type ty = std::get<1>(nt);
     cg << name << ": ";
-    // TODO(wgsl): layout-trait args should become a flat u32 offset, and
-    // BufferType args should be elided in favour of @group/@binding buffers.
-    cg << cg.getTypeName(ty);
+    emitTypeRef(cg, ty);
   });
   cg << ")";
 
   auto results = funcType.getResults();
   if (results.size() == 1) {
-    cg << " -> " << cg.getTypeName(results[0]);
+    cg << " -> ";
+    emitTypeRef(cg, results[0]);
   } else if (results.size() > 1) {
     // TODO(wgsl): WGSL has no tuples; multi-result functions need restructuring
     // (out-params or a wrapper struct). Emit the first result type for now.
-    cg << " -> /* TODO(wgsl): " << results.size() << " results */ "
-       << cg.getTypeName(results[0]);
+    cg << " -> /* TODO(wgsl): " << results.size() << " results */ ";
+    emitTypeRef(cg, results[0]);
   }
 
   cg << " {\n";
@@ -173,12 +192,14 @@ void WgslLanguageSyntax::emitSaveResults(CodegenEmitter& cg,
     cg << emitExpression << ";\n";
   } else if (names.size() == 1) {
     // `let` is immutable in WGSL, which matches the SSA values produced here.
-    cg << "let " << names[0] << ": " << cg.getTypeName(types[0]) << " = " << emitExpression
-       << ";\n";
+    cg << "let " << names[0] << ": ";
+    emitTypeRef(cg, types[0]);
+    cg << " = " << emitExpression << ";\n";
   } else {
     // TODO(wgsl): no tuple destructuring in WGSL; bind the first name for now.
-    cg << "let " << names[0] << ": " << cg.getTypeName(types[0])
-       << " = /* TODO(wgsl): " << names.size() << "-tuple destructure */ " << emitExpression
+    cg << "let " << names[0] << ": ";
+    emitTypeRef(cg, types[0]);
+    cg << " = /* TODO(wgsl): " << names.size() << "-tuple destructure */ " << emitExpression
        << ";\n";
   }
 }
@@ -268,9 +289,17 @@ void WgslLanguageSyntax::emitStructDefImpl(CodegenEmitter& cg,
   cg << "struct " << cg.getTypeName(ty) << " {\n";
   assert(names.size() == types.size());
   for (size_t i = 0; i != names.size(); i++) {
-    // TODO(wgsl): a non-layout struct holding a layout-trait member should
-    // store a flat u32 offset for that member; emit the raw type name for now.
-    cg << "  " << names[i] << ": " << cg.getTypeName(types[i]) << ",\n";
+    Type subTy = types[i];
+    cg << "  " << names[i] << ": ";
+    // A layout-trait member of a *non-layout* struct is a bound layout -- it
+    // carries a buffer, so it uses the BoundLayout_<T> wrapper. Within a layout
+    // struct the members are plain sub-layouts; the buffer is supplied once,
+    // when the whole layout is bound.
+    if (!layout && subTy.hasTrait<CodegenLayoutTypeTrait>())
+      cg << "BoundLayout_" << cg.getTypeName(subTy);
+    else
+      cg << cg.getTypeName(subTy);
+    cg << ",\n";
   }
   cg << "}\n";
 }
@@ -337,11 +366,16 @@ void WgslLanguageSyntax::emitLayoutDef(CodegenEmitter& cg,
                                        mlir::Type ty,
                                        llvm::ArrayRef<CodegenIdent<IdentKind::Field>> names,
                                        llvm::ArrayRef<mlir::Type> types) {
-  // TODO(wgsl): a layout in WGSL is not a struct of sub-layouts -- it is a set
-  // of compile-time-constant u32 offsets into the flat witness buffers. iter 4
-  // emits `const` offset declarations instead of a struct. Emit a struct for
-  // now so the type at least has a definition.
+  // The layout itself is a plain nested struct of sub-layouts / Reg leaves.
   emitStructDefImpl(cg, ty, names, types, /*layout=*/true);
+  // WGSL has no generics, so the CUDA `BoundLayout<T>` template is
+  // monomorphized: emit a companion wrapper pairing this layout type with a
+  // runtime buffer id. The bind_layout / layoutLookup / layoutSubscript / load
+  // / store op handlers in addWgslSyntax construct and thread these.
+  cg << "struct BoundLayout_" << cg.getTypeName(ty) << " {\n";
+  cg << "  layout: " << cg.getTypeName(ty) << ",\n";
+  cg << "  buf: u32,\n";
+  cg << "}\n";
 }
 
 } // namespace zirgen::codegen

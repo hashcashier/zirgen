@@ -106,6 +106,13 @@ void addWgslSyntax(CodegenOptions& opts) {
     }
   });
 
+  // A RefAttr is a column reference. C++ relies on Reg's implicit int ctor
+  // (`/*offset=*/N`); WGSL has no implicit conversions, so emit an explicit
+  // `Reg(Nu)` construction (Reg is `struct Reg { col: u32 }` in the prelude).
+  opts.addLiteralSyntax<ZStruct::RefAttr>([](CodegenEmitter& cg, ZStruct::RefAttr refAttr) {
+    cg << "Reg(" << refAttr.getIndex() << "u)";
+  });
+
   auto isExtVal = [](mlir::Type ty) {
     auto vt = llvm::dyn_cast<Zll::ValType>(ty);
     return vt && bool(vt.getExtended());
@@ -119,6 +126,81 @@ void addWgslSyntax(CodegenOptions& opts) {
   opts.addOpSyntax<Zll::AddOp>(binOp("add", "ext_add"));
   opts.addOpSyntax<Zll::SubOp>(binOp("sub", "ext_sub"));
   opts.addOpSyntax<Zll::MulOp>(binOp("mul", "ext_mul"));
+
+  // --- Layout / buffer ops -------------------------------------------------
+  // WGSL has no generics, so the CUDA `BoundLayout<T>` template is
+  // monomorphized: WgslLanguageSyntax::emitLayoutDef emits a companion
+  // `struct BoundLayout_<T> { layout: T, buf: u32 }` for every layout type T.
+  // These op handlers thread the runtime `.buf` field through layout
+  // navigation and construct the right monomorphized wrapper. emitInvokeMacro
+  // cannot do this (it never sees the result type), but addOpSyntax handlers
+  // get the typed op. The base/ref expression is emitted more than once; for
+  // codegen'd SSA values it is a saved variable name, so this is correct if
+  // occasionally verbose. TODO(wgsl): bind to a `let` to avoid re-emission.
+
+  // bind_layout(LAYOUT_CONST, buffer) -> BoundLayout_<T>(LAYOUT_CONST, buffer)
+  opts.addOpSyntax<ZStruct::BindLayoutOp>([](CodegenEmitter& cg, ZStruct::BindLayoutOp op) {
+    auto symAttr = llvm::cast<mlir::FlatSymbolRefAttr>(op.getLayoutAttr());
+    cg << "BoundLayout_" << cg.getTypeName(op.getType()) << "("
+       << CodegenIdent<IdentKind::Const>(symAttr.getAttr()) << ", " << op.getBuffer() << ")";
+  });
+
+  // layoutLookup: narrow the layout to a member field, keep the buffer.
+  opts.addOpSyntax<ZStruct::LookupOp>([](CodegenEmitter& cg, ZStruct::LookupOp op) {
+    CodegenIdent<IdentKind::Field> member(op.getMemberAttr());
+    if (llvm::isa<ZStruct::LayoutType, ZStruct::LayoutArrayType>(op.getBase().getType())) {
+      cg << "BoundLayout_" << cg.getTypeName(op.getOut().getType()) << "(" << op.getBase()
+         << ".layout." << member << ", " << op.getBase() << ".buf)";
+    } else {
+      cg << op.getBase() << "." << member;
+    }
+  });
+
+  // layoutSubscript: index a layout array, keep the buffer. A Val index is in
+  // Montgomery form and must be decoded to a plain u32 first.
+  opts.addOpSyntax<ZStruct::SubscriptOp>([](CodegenEmitter& cg, ZStruct::SubscriptOp op) {
+    auto emitIndex = [&cg, &op]() {
+      if (llvm::isa<Zll::ValType>(op.getIndex().getType()))
+        cg << "decode(" << op.getIndex() << ")";
+      else
+        cg << op.getIndex();
+    };
+    if (llvm::isa<ZStruct::LayoutArrayType>(op.getBase().getType())) {
+      cg << "BoundLayout_" << cg.getTypeName(op.getOut().getType()) << "(" << op.getBase()
+         << ".layout[" << EmitPart(emitIndex) << "], " << op.getBase() << ".buf)";
+    } else {
+      cg << op.getBase() << "[" << EmitPart(emitIndex) << "]";
+    }
+  });
+
+  // load(reg, distance): reg is a BoundLayout_Reg; reg.layout.col is the column
+  // and reg.buf the buffer id. load/load_ext/load_as_ext mirror LoadOp::emitExpr.
+  opts.addOpSyntax<ZStruct::LoadOp>([](CodegenEmitter& cg, ZStruct::LoadOp op) {
+    bool resultExt = bool(op.getType().getExtended());
+    bool refExt = bool(op.getRef().getType().getElement().getExtended());
+    if (refExt)
+      cg << "load_ext(";
+    else if (resultExt)
+      cg << "load_as_ext(";
+    else
+      cg << "load(";
+    cg << op.getRef() << ".layout.col, " << op.getRef() << ".buf, " << op.getDistance() << ")";
+  });
+
+  // store(reg, val): reg is a BoundLayout_Reg.
+  opts.addOpSyntax<ZStruct::StoreOp>([](CodegenEmitter& cg, ZStruct::StoreOp op) {
+    if (op.getVal().getType().getFieldK() > 1)
+      cg << "store_ext(";
+    else
+      cg << "store(";
+    cg << op.getRef() << ".layout.col, " << op.getRef() << ".buf, " << op.getVal() << ")";
+  });
+
+  // get_buffer(name): buffers are a small named set; emit a u32 buffer id that
+  // the WGSL prelude maps to a @group/@binding storage buffer.
+  opts.addOpSyntax<ZStruct::GetBufferOp>([](CodegenEmitter& cg, ZStruct::GetBufferOp op) {
+    cg << "buf_" << CodegenIdent<IdentKind::Var>(op.getNameAttr());
+  });
 }
 
 } // namespace
@@ -158,12 +240,12 @@ CodegenOptions getWgslCodegenOpts() {
   codegen::CodegenOptions opts(&kWgsl);
   addCommonSyntax(opts);
   addWgslSyntax(opts);
-  ZStruct::addCppSyntax(opts);
-  // Deliberately NOT calling Zhlt::addCppSyntax(opts): its sole effect is to
-  // register the "ExecContext& ctx" function/call context argument. WGSL has no
-  // references and no per-call context object -- the witness buffers are
-  // module-scope @group/@binding storage buffers -- so the context arg is
-  // elided entirely for this target.
+  // Deliberately NOT calling ZStruct::addCppSyntax / Zhlt::addCppSyntax:
+  //  * ZStruct::addCppSyntax only registers the C++ RefAttr literal syntax,
+  //    which relies on Reg's implicit int constructor -- addWgslSyntax
+  //    registers an explicit `Reg(Nu)` form instead.
+  //  * Zhlt::addCppSyntax only registers the "ExecContext& ctx" context
+  //    argument, which WGSL elides (buffers are module-scope @group/@binding).
   return opts;
 }
 
