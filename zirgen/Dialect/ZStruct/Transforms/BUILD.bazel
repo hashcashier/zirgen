@@ -35,6 +35,7 @@ cc_library(
         "BuffersToArgs.cpp",
         "ExpandLayout.cpp",
         "InlineLayout.cpp",
+        "MuxChunk.cpp",
         "OptimizeLayout.cpp",
         "RewritePatterns.cpp",
         "Unroll.cpp",

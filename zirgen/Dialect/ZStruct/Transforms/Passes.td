@@ -56,4 +56,17 @@ def BuffersToArgs : Pass<"buffers-to-args"> {
   let constructor = "zirgen::ZStruct::createBuffersToArgsPass()";
 }
 
+def MuxChunk : Pass<"chunk-mux", "mlir::ModuleOp"> {
+  let summary = "Split wide zstruct.switch muxes into per-arm-group chunk step_funcs";
+  let description = [{
+    SP7 WGSL-only pass: Chrome's Tint compiler has a tiny per-@compute-pipeline
+    capacity ceiling. The witgen giants are each a prologue + one wide
+    zstruct.switch + an epilogue. This splits a wide switch into N chunk
+    step_funcs, each rerunning the idempotent prologue, running only its arm
+    group, and running the epilogue guarded by "did one of my arms fire".
+  }];
+  let constructor = "zirgen::ZStruct::createMuxChunkPass()";
+  let dependentDialects = ["zirgen::ZStruct::ZStructDialect"];
+}
+
 #endif // ZSTRUCT_TRANSFORM_PASSES
