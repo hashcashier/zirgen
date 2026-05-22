@@ -53,6 +53,7 @@ cc_library(
         "//zirgen/Dialect/ZHLT/IR:Codegen",
         "//zirgen/Dialect/Zll/Analysis",
         "//zirgen/Dialect/Zll/Transforms:passes",
+        "//zirgen/Dialect/ZStruct/Transforms:passes",
         "//zirgen/circuit/recursion:lib",
         "//zirgen/compiler/stats",
     ],

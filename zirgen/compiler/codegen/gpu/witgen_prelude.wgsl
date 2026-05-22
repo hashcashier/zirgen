@@ -408,3 +408,17 @@ fn extern_bigIntExtern() -> array<Val, 16> {
   return array<Val, 16>(0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
                         0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u);
 }
+
+fn extern_plonkWriteAccum(a: Val, b: Val, c: Val, d: Val) {
+  store_at(0u, buf_accum, a);
+  store_at(1u, buf_accum, b);
+  store_at(2u, buf_accum, c);
+  store_at(3u, buf_accum, d);
+}
+
+fn extern_plonkReadAccum() -> array<Val, 4> {
+  return array<Val, 4>(load_at(0u, buf_accum, 0u),
+                       load_at(1u, buf_accum, 0u),
+                       load_at(2u, buf_accum, 0u),
+                       load_at(3u, buf_accum, 0u));
+}

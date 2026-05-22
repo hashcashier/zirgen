@@ -23,11 +23,14 @@ DEFAULT_OUTS = [
     # "step_verify_bytes.metal",
     "step_compute_accum.metal",
     "step_verify_accum.metal",
+    "step_compute_accum.wgsl",
+    "step_verify_accum.wgsl",
     "taps.cpp",
     "taps.rs",
     "layout.rs.inc",
     "layout.cpp.inc",
     "layout.cu.inc",
+    "layout.wgsl.inc",
 ]
 
 ZIRGEN_OUTS = [
