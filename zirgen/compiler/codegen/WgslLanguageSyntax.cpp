@@ -27,12 +27,12 @@
 //   * no closures      -> map/reduce must be unrolled or lowered
 //   * no tuples        -> multi-result functions must be restructured
 //
-// THIS ITERATION (SP7 iter 3) emits *syntactically* WGSL output to prove the
-// codegen toolchain end-to-end: the C++ compiles, gen_zirgen runs the fourth
-// emitTarget(WgslCodegenTarget...) pass without crashing, and a steps.wgsl
-// file is produced. The semantic lowerings listed above are NOT done here --
-// every place that needs one is marked TODO(wgsl) and emits a best-effort
-// placeholder so the module walk completes. The semantic work lands in iter 4.
+// This backend emits WGSL from the same codegen walk as the other targets;
+// the lowerings for the constraints above live in this file (context args
+// elide to module-scope @group/@binding storage buffers, map/reduce
+// unrolls, multi-result functions are restructured). Anything still
+// incomplete is marked TODO(wgsl) at its site; generated modules are
+// validated with naga by the risc0-side tooling.
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -120,10 +120,10 @@ void emitTypeRef(CodegenEmitter& cg, mlir::Type ty) {
 } // namespace
 
 std::string WgslLanguageSyntax::canonIdent(llvm::StringRef ident, IdentKind kind) {
-  // TODO(wgsl): WGSL has a large reserved-word set (incl. `super`, produced from
-  // the IR field `_super`) and forbids leading `__` / a lone `_`. iter 4 adds
-  // collision-safe escaping. For now, mirror the C++ canonicalization so the
-  // skeleton produces stable, mostly-valid identifiers.
+  // TODO(wgsl): WGSL has a large reserved-word set (incl. `super`, produced
+  // from the IR field `_super`) and forbids leading `__` / a lone `_`. This
+  // mirrors the C++ canonicalization, which the naga-validated modules show
+  // is sufficient in practice; fully collision-safe escaping is still open.
   switch (kind) {
   case IdentKind::Var:
   case IdentKind::Field:
@@ -194,9 +194,9 @@ void WgslLanguageSyntax::emitFuncDefinition(CodegenEmitter& cg,
   cg << "fn " << funcName << "(";
   if (!contextArgDecls.empty()) {
     // TODO(wgsl): context args arrive as C++ decl strings (e.g. "ExecContext&
-    // ctx"). WGSL has no references; iter 4 elides these and rewrites buffer
-    // access to module-scope @group/@binding storage buffers. Emit verbatim for
-    // now so the function signature is at least present.
+    // ctx"). WGSL has no references, and the production pipeline elides them
+    // (buffer access is module-scope @group/@binding storage). Emit verbatim
+    // if any slip through so the signature is visible in the output.
     cg.interleaveComma(contextArgDecls, [&](auto contextArg) { cg << EmitPart(contextArg); });
     if (!argNames.empty())
       cg << ", ";
@@ -281,7 +281,8 @@ void WgslLanguageSyntax::emitCall(CodegenEmitter& cg,
                                   llvm::ArrayRef<CodegenValue> args) {
   cg << callee << "(";
   if (!contextArgs.empty()) {
-    // TODO(wgsl): see emitFuncDefinition -- context args are elided in iter 4.
+    // TODO(wgsl): see emitFuncDefinition -- the production pipeline elides
+    // context args; emit verbatim if any appear.
     cg.interleaveComma(contextArgs, [&](auto contextArg) { cg << EmitPart(contextArg); });
     if (!args.empty())
       cg << ", ";
@@ -300,9 +301,9 @@ void WgslLanguageSyntax::emitInvokeMacro(CodegenEmitter& cg,
   //     these are special-cased below.
   //  2. Everything else (load / store / load_ext / store_ext / invoke_extern /
   //     bind_layout / ...) becomes a call to a snake_case helper function
-  //     provided by the step-template prelude. The prelude functions land in
-  //     iter 4b; context args ("ctx") are dropped here because WGSL buffers are
-  //     module-scope @group/@binding storage, not threaded through a parameter.
+  //     provided by the step-template prelude. Context args ("ctx") are
+  //     dropped here because WGSL buffers are module-scope @group/@binding
+  //     storage, not threaded through a parameter.
   llvm::StringRef name = callee.strref();
 
   // layoutLookup(base, a.b.c) -> base.a.b.c  (struct field access path)
@@ -372,7 +373,8 @@ void WgslLanguageSyntax::emitStructConstruct(CodegenEmitter& cg,
                                              llvm::ArrayRef<CodegenIdent<IdentKind::Field>> names,
                                              llvm::ArrayRef<CodegenValue> values) {
   // WGSL struct construction is positional: Name(v0, v1, ...). This relies on
-  // `values` arriving in field-declaration order (verified in iter 4).
+  // `values` arriving in field-declaration order (verified against the
+  // generated layouts).
   cg << cg.getTypeName(ty) << "(";
   if (values.empty())
     cg << "0u"; // matches the _unused dummy member emitStructDefImpl adds

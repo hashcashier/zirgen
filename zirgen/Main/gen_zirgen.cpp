@@ -290,7 +290,7 @@ int main(int argc, char* argv[]) {
       return 1;
     }
     pm.addPass(zirgen::ZStruct::createUnrollPass());
-    // SP7 iter 6a: split the wide instruction-class muxes into per-arm-group
+    // Split the wide instruction-class muxes into per-arm-group
     // chunk step_funcs so each @compute pipeline stays under Chrome/Tint's
     // capacity ceiling. WGSL-only -- the Rust/C++/CUDA targets are untouched.
     // MuxChunk emits chunk fns ALONGSIDE the originals; risc0-side per-entry

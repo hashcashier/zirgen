@@ -191,8 +191,8 @@ fn ext_scale(lhs: ExtVal, rhs: Val) -> ExtVal {
 }
 
 // TODO(wgsl): the extension-field inverse. The base-field path (inv/inv_0) is
-// exact; ext_inv is a placeholder until verified against ExtElem::inv. iter 6's
-// byte-identical SP-CR check will flag any rv32im path that actually needs it.
+// exact; ext_inv here is an identity placeholder — any kernel that needs the
+// real inverse must splice in a verified formula before compiling.
 fn ext_inv(x: ExtVal) -> ExtVal {
   return x;
 }

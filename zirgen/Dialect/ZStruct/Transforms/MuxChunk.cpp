@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// SP7 iter 6a -- the WGSL-only chunking transformation.
+// The WGSL-only mux-chunking transformation.
 //
 // The WGSL backend emits one `zhlt.step_func` per witgen function. Chrome's
 // Tint compiler has a per-`@compute`-pipeline capacity ceiling far below the
-// generated module (iter 5c/5d: a ~0.39 MB reachable closure device-loses;
+// generated module (measured: a ~0.39 MB reachable closure device-loses;
 // ~0.11 MB dispatches). The witgen giants -- `exec$Top`, `exec$Top$extract`,
 // `exec$Top$accum` -- are each a small prologue + one wide `zstruct.switch`
 // (the rv32im instruction-class mux) + an epilogue. The sub-workers reached
@@ -49,7 +49,7 @@ namespace {
 // A switch is "wide" -- worth splitting -- when it has more than this many
 // arms. exec$Top/$extract/$accum have 13; the sub-workers have ~8. One arm
 // per chunk keeps each chunk's reachable closure well under the ~0.1-0.4 MB
-// Tint ceiling measured in iter 5d, AND makes recursion clean: a 1-arm chunk
+// measured Tint ceiling, AND makes recursion clean: a 1-arm chunk
 // calls exactly one mux-arm worker, so call-rewriting it to a chunked worker
 // is a simple linear expansion (no cross product).
 constexpr unsigned kMaxArmsPerChunk = 1;
